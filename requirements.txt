@@ -23,3 +23,6 @@ flask==2.2.3
 
 # PostgreSQL uchun (agar ishlatsangiz)
 psycopg2-binary==2.9.5
+
+pyTelegramBotAPI==4.15.3
+pytz==2024.1
