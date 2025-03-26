@@ -111,7 +111,7 @@ async def forward_to_admin(update: Update, context: CallbackContext, user, messa
         #          f"🆔 ID: {user.id}\n"
         #          f"👤 Ism: {user.full_name}\n"
         #          f"📌 Username: @{user.username if user.username else 'yoq'}\n"
-        #          f"📞 Telefon: {users.get(str(user.id), {}).get('phone', 'noma\'lum')}"
+        #          f"📞 Telefon: {users.get(str(user.id), {}).get('phone', 'nomalum')}"
         # )
     except Exception as e:
         error_msg = f"Adminga yuborishda xato: {e}"
@@ -219,16 +219,16 @@ async def add_admin(update: Update, context: CallbackContext):
             user = await context.bot.get_chat(admin_id)
             new_admin = {
                 'id': admin_id,
-                'username': user.username if user.username else 'noma\'lum'
+                'username': user.username if user.username else 'nomalum'
             }
             admins.append(new_admin)
             save_to_file(admins, ADMINS_FILE)
-            await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (@{user.username if user.username else 'noma\'lum'})")
+            await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (@{user.username if user.username else 'nomalum'})")
         except Exception as e:
             print(f"Foydalanuvchi ma'lumotlarini olishda xato: {e}")
             new_admin = {
                 'id': admin_id,
-                'username': 'noma\'lum'
+                'username': 'nomalum'
             }
             admins.append(new_admin)
             save_to_file(admins, ADMINS_FILE)
@@ -510,7 +510,7 @@ async def manage_admins(update: Update, context: CallbackContext):
         admins = load_from_file(ADMINS_FILE, default=[])
         message = "👥 <b>Adminlar boshqaruvi</b>\n\n"
         for admin in admins:
-            message += f"🆔 {admin['id']} | 👤 @{admin.get('username', 'noma\'lum')}\n"
+            message += f"🆔 {admin['id']} | 👤 @{admin.get('username', 'nomalum')}\n"
         
         buttons = [
             [InlineKeyboardButton("➕ Admin qo'shish", callback_data="add_admin")],
@@ -546,15 +546,15 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                             user = await context.bot.get_chat(admin_id)
                             admins.append({
                                 'id': admin_id,
-                                'username': user.username if user.username else 'noma\'lum'
+                                'username': user.username if user.username else 'nomalum'
                             })
                             save_to_file(admins, ADMINS_FILE)
-                            await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (@{user.username if user.username else 'noma\'lum'})")
+                            await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (@{user.username if user.username else 'nomalum'})")
                         except Exception as e:
                             print(f"Foydalanuvchi ma'lumotlarini olishda xato: {e}")
                             admins.append({
                                 'id': admin_id,
-                                'username': 'noma\'lum'
+                                'username': 'nomalum'
                             })
                             save_to_file(admins, ADMINS_FILE)
                             await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (username noma'lum)")
