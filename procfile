@@ -1,2 +1,2 @@
-web: gunicorn app:app --bind 0.0.0.0:$PORT
-worker: python bot.py
+web: pip install -r requirements.txt && gunicorn app:app --bind 0.0.0.0:$PORT
+worker: pip install -r requirements.txt && python bot.py
