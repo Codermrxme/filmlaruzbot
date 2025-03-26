@@ -14,6 +14,8 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 
+
+
 # 🔧 .env fayldan sozlamalarni yuklash
 load_dotenv()
 
