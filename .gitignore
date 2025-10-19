@@ -6,3 +6,4 @@ __pycache__/
 users.xlsx
 *.log
 /test_mongo.py/
+web_server.py/

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import time
 import asyncio
 import threading
+import requests
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -31,7 +32,6 @@ ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', '')  # Sizning username
 MAIN_CHANNEL = os.getenv('MAIN_CHANNEL', '')  # Asosiy kanal username
 MONGODB_URI = os.getenv('MONGODB_URI', '')  # MongoDB connection string
 MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', 'kino_bot')  # MongoDB database nomi
-PORT = int(os.getenv('PORT', 10000))  # Render uchun port
 
 # Xatolikni tekshirish
 if not TOKEN:
@@ -42,23 +42,12 @@ if not CHANNEL_ID:
     raise ValueError("CHANNEL_ID .env faylda aniqlanmagan yoki noto'g'ri")
 if not MONGODB_URI:
     raise ValueError("MONGODB_URI .env faylda aniqlanmagan")
-if not ADMIN_USERNAME:
-    print("Diqqat: ADMIN_USERNAME .env faylda aniqlanmagan")
-if not MAIN_CHANNEL:
-    print("Diqqat: MAIN_CHANNEL .env faylda aniqlanmagan")
 
-print(f"🔧 MongoDB Database nomi: {MONGO_DB_NAME}")
-print(f"🔧 Port: {PORT}")
+print("🚀 Bot ishga tushmoqda...")
 
 # 📂 MongoDB ulanish
 try:
     client = MongoClient(MONGODB_URI, tlsCAFile=certifi.where())
-    
-    # Database ni tekshirish
-    db_names = client.list_database_names()
-    print(f"📊 Mavjud databaselar: {db_names}")
-    
-    # Database ni tanlash yoki yaratish
     db = client[MONGO_DB_NAME]
     
     # Kolleksiyalar
@@ -76,13 +65,8 @@ try:
             "added_at": datetime.now(),
             "is_main": True
         })
-        print("✅ Asosiy admin qo'shildi")
     
-    # Kolleksiyalarni tekshirish
-    collections = db.list_collection_names()
-    print(f"📁 Mavjud kolleksiyalar: {collections}")
-    
-    print(f"✅ MongoDB ga muvaffaqiyatli ulandi - Database: {MONGO_DB_NAME}")
+    print("✅ MongoDB ga ulandi")
 except Exception as e:
     print(f"❌ MongoDB ga ulanishda xato: {e}")
     raise
@@ -106,9 +90,33 @@ def home():
 def health():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+@app.route('/ping')
+def ping():
+    return {"status": "pong", "time": datetime.now().isoformat()}
+
 def run_flask():
     """Flask serverni ishga tushirish"""
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    try:
+        from waitress import serve
+        serve(app, host='0.0.0.0', port=10000)
+    except ImportError:
+        app.run(host='0.0.0.0', port=10000, debug=False)
+
+def run_web_server():
+    """aiohttp serverni ishga tushirish"""
+    try:
+        from web_server import start_server
+        import asyncio
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        runner = loop.run_until_complete(start_server())
+        print("✅ aiohttp server ishga tushdi")
+        loop.run_forever()
+    except ImportError as e:
+        print(f"❌ web_server topilmadi: {e}")
+    except Exception as e:
+        print(f"❌ aiohttp serverda xato: {e}")
 
 # 🛠️ Yordamchi funksiyalar
 def is_admin(user_id):
@@ -216,7 +224,6 @@ async def export_users(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ Foydalanuvchilar mavjud emas!")
             return
 
-        # MongoDB _id maydonini olib tashlash
         for user in users:
             user.pop('_id', None)
             if 'start_time' in user and isinstance(user['start_time'], datetime):
@@ -234,7 +241,6 @@ async def export_users(update: Update, context: CallbackContext):
             caption="📊 Foydalanuvchilar ro'yxati"
         )
         
-        # Vaqtinchalik faylni o'chirish
         os.remove(excel_file)
     except Exception as e:
         error_msg = f"Foydalanuvchilarni eksport qilishda xato: {e}"
@@ -248,37 +254,23 @@ async def show_statistics(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ Sizda bunday huquq yo'q!")
             return
 
-        # Foydalanuvchilar soni
         total_users = users_collection.count_documents({})
-        
-        # Faol foydalanuvchilar (oxirgi 7 kun ichida faol bo'lganlar)
         seven_days_ago = datetime.now() - timedelta(days=7)
         active_users = users_collection.count_documents({
             "last_activity": {"$gte": seven_days_ago}
         })
-        
-        # Bugungi yangi foydalanuvchilar
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         new_users_today = users_collection.count_documents({
             "start_time": {"$gte": today}
         })
-        
-        # Kodlar soni
         total_codes = codes_collection.count_documents({})
-        
-        # Kanallar soni
         total_channels = channels_collection.count_documents({})
-        
-        # Bot ishlash vaqti
         uptime = datetime.now() - BOT_START_TIME
         uptime_days = uptime.days
         uptime_hours = uptime.seconds // 3600
         uptime_minutes = (uptime.seconds % 3600) // 60
-        
-        # Toshkent vaqti
         tashkent_time = datetime.utcnow() + timedelta(hours=5)
         
-        # Statistika xabari
         stats_message = (
             "📊 <b>Bot Statistikasi</b>\n\n"
             f"👥 <b>Jami foydalanuvchilar:</b> {total_users}\n"
@@ -334,7 +326,6 @@ async def add_admin(update: Update, context: CallbackContext):
             admins_collection.insert_one(new_admin)
             await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (@{user.username if user.username else 'nomalum'})")
         except Exception as e:
-            print(f"Foydalanuvchi ma'lumotlarini olishda xato: {e}")
             new_admin = {
                 'id': admin_id,
                 'username': 'nomalum',
@@ -514,7 +505,6 @@ async def add_channel(update: Update, context: CallbackContext):
             channel = await context.bot.get_chat(channel_id)
             username = channel.username if channel.username else "noma'lum"
         except Exception as e:
-            print(f"Kanal ma'lumotlarini olishda xato: {e}")
             username = "noma'lum"
         
         if channels_collection.find_one({"id": channel_id}):
@@ -663,7 +653,6 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                             admins_collection.insert_one(new_admin)
                             await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (@{user.username if user.username else 'nomalum'})")
                         except Exception as e:
-                            print(f"Foydalanuvchi ma'lumotlarini olishda xato: {e}")
                             new_admin = {
                                 'id': admin_id,
                                 'username': 'nomalum',
@@ -715,7 +704,6 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                         channel = await context.bot.get_chat(channel_id)
                         username = channel.username if channel.username else "noma'lum"
                     except Exception as e:
-                        print(f"Kanal ma'lumotlarini olishda xato: {e}")
                         username = "noma'lum"
                     
                     if channels_collection.find_one({"id": channel_id}):
@@ -859,7 +847,6 @@ async def button_click(update: Update, context: CallbackContext):
         await send_error_to_admin(context, error_msg)
 
 async def manage_admins_callback(update: Update, context: CallbackContext):
-    """Callback uchun alohida adminlarni boshqarish funksiyasi"""
     try:
         query = update.callback_query
         await query.answer()
@@ -885,7 +872,6 @@ async def manage_admins_callback(update: Update, context: CallbackContext):
         await send_error_to_admin(context, error_msg)
 
 async def manage_channels_callback(update: Update, context: CallbackContext):
-    """Callback uchun alohida kanallarni boshqarish funksiyasi"""
     try:
         query = update.callback_query
         await query.answer()
@@ -917,7 +903,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
         
         track_user(user)
         
-        # Telefon raqamini saqlash
         if message.contact:
             users_collection.update_one(
                 {"id": user.id},
@@ -926,7 +911,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
         
         text = message.text.lower()
         
-        # Admin menyusi o'tish funksiyalari
         if "foydalanuvchi menyusi" in text and is_admin(user.id):
             context.user_data['current_menu'] = 'user'
             await update.message.reply_text(
@@ -941,9 +925,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 reply_markup=admin_menu())
             return
         
-        # Agar admin bo'lsa va foydalanuvchi menyusida bo'lsa
         if is_admin(user.id) and context.user_data.get('current_menu') == 'user':
-            # Admin foydalanuvchi menyusida bo'lganda
             if "admin bilan bog'lanish" in text:
                 await update.message.reply_text(
                     f"📞 Admin bilan bog'lanish: @{ADMIN_USERNAME}\n\n"
@@ -956,7 +938,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
             elif "orqaga" in text:
                 await update.message.reply_text("Bosh menyu:", reply_markup=user_menu())
             else:
-                # Kodlarni tekshirish
                 codes = list(codes_collection.find())
                 code_found = False
                 for code in codes:
@@ -970,7 +951,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
                             code_found = True
                             break
                         except Exception as e:
-                            print(f"Xato: {e}")
                             await message.reply_text("❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
                             return
                 
@@ -982,7 +962,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
                         reply_markup=user_menu())
             return
         
-        # Agar admin bo'lsa va admin menyusida bo'lsa
         if is_admin(user.id):
             if 'action' in context.user_data:
                 await handle_admin_actions(update, context)
@@ -1008,8 +987,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 await show_statistics(update, context)
             return
         
-        # Oddiy foydalanuvchilar uchun
-        # Obunani tekshirish
         subscription_status = await check_subscription(user.id, context)
         if subscription_status is not True:
             channels = subscription_status
@@ -1031,7 +1008,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 reply_markup=InlineKeyboardMarkup(buttons))
             return
         
-        # Foydalanuvchi buyruqlari
         if "admin bilan bog'lanish" in text:
             await update.message.reply_text(
                 f"📞 Admin bilan bog'lanish: @{ADMIN_USERNAME}\n\n"
@@ -1055,7 +1031,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
                             disable_notification=True)
                         return
                     except Exception as e:
-                        print(f"Xato: {e}")
                         await message.reply_text("❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
                         return
             
@@ -1074,7 +1049,6 @@ async def start(update: Update, context: CallbackContext):
         user = update.effective_user
         track_user(user)
         
-        # Menyu holatini saqlash
         context.user_data['current_menu'] = 'admin' if is_admin(user.id) else 'user'
         
         if is_admin(user.id):
@@ -1084,7 +1058,6 @@ async def start(update: Update, context: CallbackContext):
                 "🎛️ Admin menyusiga qaytish uchun /admin buyrug'ini yuboring.",
                 reply_markup=admin_menu())
         else:
-            # Obunani tekshirish
             subscription_status = await check_subscription(user.id, context)
             if subscription_status is not True:
                 channels = subscription_status
@@ -1172,37 +1145,46 @@ async def user_help(update: Update):
         await send_error_to_admin(update._context, error_msg)
 
 # Botni doimiy faol saqlash funksiyasi
-def keep_bot_active():
-    """Botni doimiy faol saqlash uchun ichki faollik"""
-    async def internal_activity():
+def keep_alive():
+    """Botni doimiy faol saqlash uchun"""
+    def ping_server():
         while True:
             try:
-                # Har 4-5 daqiqa oralig'ida ichki faollik
-                await asyncio.sleep(250 + (time.time() % 10))  # 4-5 daqiqa oralig'ida
+                # Flask serverga ping yuborish
+                response = requests.get("http://localhost:10000/ping", timeout=10)
+                print(f"🔄 Flask ping: {response.status_code}")
                 
-                # Bot holatini tekshirish va log qilish
-                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                total_users = users_collection.count_documents({})
+                # aiohttp serverga ping yuborish
+                response2 = requests.get("http://localhost:8080/ping", timeout=10)
+                print(f"🔄 aiohttp ping: {response2.status_code}")
                 
-                print(f"🟢 Bot faol: {current_time} | Foydalanuvchilar: {total_users}")
-                
-                # Har 1 soatda statistika logi
-                if datetime.now().minute == 0:
-                    active_users = users_collection.count_documents({
-                        "last_activity": {"$gte": datetime.now() - timedelta(days=1)}
-                    })
-                    print(f"📊 Soatlik statistika: {total_users} jami, {active_users} faol")
-                    
             except Exception as e:
-                print(f"❌ Bot faollik funksiyasida xato: {e}")
+                print(f"❌ Ping xatosi: {e}")
+            
+            time.sleep(300)  # 5 daqiqa
     
-    # Yangi task yaratish
-    asyncio.create_task(internal_activity())
+    ping_thread = threading.Thread(target=ping_server, daemon=True)
+    ping_thread.start()
+    print("✅ Bot faollik funksiyasi ishga tushdi")
 
-# Botni ishga tushirish
-async def start_bot():
-    """Botni ishga tushirish"""
+# Asosiy ishga tushirish funksiyasi
+def main():
+    """Asosiy funksiya"""
     try:
+        # Flask serverni yangi threadda ishga tushirish
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        print("🌐 Flask server 10000 portda ishga tushdi")
+        
+        # aiohttp serverni yangi threadda ishga tushirish
+        aiohttp_thread = threading.Thread(target=run_web_server, daemon=True)
+        aiohttp_thread.start()
+        print("🌐 aiohttp server 8080 portda ishga tushdi")
+        
+        # Botni faol saqlash
+        keep_alive()
+        
+        # Telegram botni ishga tushirish
         application = Application.builder().token(TOKEN).build()
         
         # Buyruqlar
@@ -1219,7 +1201,7 @@ async def start_bot():
         application.add_handler(CommandHandler("users", export_users))
         application.add_handler(CommandHandler("yordam", user_help))
         application.add_handler(CommandHandler("help", bot_help))
-        application.add_handler(CommandHandler("admin", start))  # Admin menyusiga qaytish
+        application.add_handler(CommandHandler("admin", start))
         
         # Xabarlar
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
@@ -1231,34 +1213,13 @@ async def start_bot():
         print("🤖 Bot ishga tushdi...")
         print(f"👤 Asosiy admin: {ADMIN_ID}")
         print(f"📊 MongoDB Database: {MONGO_DB_NAME}")
-        print(f"⏰ Bot ishga tushgan vaqt: {BOT_START_TIME.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Botni faol saqlash funksiyasini ishga tushirish
-        keep_bot_active()
-        print("🔄 Bot faollik funksiyasi ishga tushdi")
-        
         print("⏳ Bot polling ni boshladi...")
         
         # Botni ishga tushirish
-        await application.run_polling()
+        application.run_polling()
         
     except Exception as e:
-        print(f"❌ Botda jiddiy xato yuz berdi: {e}")
-
-def main():
-    """Asosiy funksiya"""
-    try:
-        # Flask serverni yangi threadda ishga tushirish
-        flask_thread = threading.Thread(target=run_flask, daemon=True)
-        flask_thread.start()
-        print(f"🌐 Flask server {PORT} portda ishga tushdi")
-        
-        # Asyncio event loop ni ishga tushirish
-        asyncio.run(start_bot())
-    except KeyboardInterrupt:
-        print("\n🛑 Bot to'xtatildi")
-    except Exception as e:
-        print(f"❌ Botda jiddiy xato yuz berdi: {e}")
+        print(f"❌ Botda xato yuz berdi: {e}")
 
 if __name__ == '__main__':
     main()
