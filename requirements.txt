@@ -29,3 +29,4 @@ pytz==2024.1
 
 pymongo==4.5.0
 certifi==2023.7.22
+waitress==2.1.2
