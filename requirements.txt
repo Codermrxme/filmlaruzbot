@@ -19,7 +19,7 @@ loguru==0.7.0
 
 # Deploy uchun
 gunicorn==20.1.0
-flask==2.2.3
+flask==2.3.3
 
 # PostgreSQL uchun (agar ishlatsangiz)
 psycopg2-binary==2.9.5
