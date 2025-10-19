@@ -21,4 +21,4 @@ services:
       - key: MONGO_DB_NAME
         fromSecret: true
       - key: PORT
-        value: 8000
+        value: 10000
