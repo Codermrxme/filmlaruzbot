@@ -102,22 +102,6 @@ def run_flask():
     except ImportError:
         app.run(host='0.0.0.0', port=10000, debug=False)
 
-def run_web_server():
-    """aiohttp serverni ishga tushirish"""
-    try:
-        from web_server import start_server
-        import asyncio
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        runner = loop.run_until_complete(start_server())
-        print("✅ aiohttp server ishga tushdi")
-        loop.run_forever()
-    except ImportError as e:
-        print(f"❌ web_server topilmadi: {e}")
-    except Exception as e:
-        print(f"❌ aiohttp serverda xato: {e}")
-
 # 🛠️ Yordamchi funksiyalar
 def is_admin(user_id):
     return admins_collection.find_one({"id": user_id}) is not None
@@ -184,21 +168,28 @@ async def check_subscription(user_id, context: CallbackContext):
         if not channels:
             return True
         
-        subscription = subscriptions_collection.find_one({"user_id": user_id})
-        if subscription and subscription.get('subscribed', False):
-            return True
-        
+        # Foydalanuvchi obunasini tekshirish
         not_subscribed = []
         for channel in channels:
             try:
-                member = await context.bot.get_chat_member(chat_id=channel['id'], user_id=user_id)
-                if member.status in ['left', 'kicked']:
+                # Kanal ID sini to'g'ri formatda olish
+                chat_id = channel['id']
+                
+                # Foydalanuvchi kanal a'zosi ekanligini tekshirish
+                member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+                
+                # Obuna holatini tekshirish
+                if member.status in ['member', 'administrator', 'creator']:
+                    continue  # Obuna bo'lgan
+                else:
                     not_subscribed.append(channel)
+                    
             except Exception as e:
-                print(f"Obunani tekshirishda xato: {e}")
+                print(f"Kanal {channel['id']} obunasini tekshirishda xato: {e}")
                 not_subscribed.append(channel)
         
         if not not_subscribed:
+            # Barcha kanallarga obuna bo'lgan
             subscriptions_collection.update_one(
                 {"user_id": user_id},
                 {"$set": {"subscribed": True, "checked_at": datetime.now()}},
@@ -210,7 +201,7 @@ async def check_subscription(user_id, context: CallbackContext):
     except Exception as e:
         error_msg = f"Obunani tekshirishda xato: {e}"
         print(error_msg)
-        await send_error_to_admin(context, error_msg)
+        # Xato bo'lsa ham foydalanuvchiga ruxsat beramiz
         return True
 
 async def export_users(update: Update, context: CallbackContext):
@@ -582,9 +573,12 @@ async def manage_channels(update: Update, context: CallbackContext):
             return
 
         channels = list(channels_collection.find())
-        message = "📢 <b>Majburiy kanallar</b>\n\n"
-        for channel in channels:
-            message += f"📌 {channel['name']}\nID: {channel['id']}\nUsername: @{channel['username']}\n\n"
+        if not channels:
+            message = "📢 <b>Majburiy kanallar</b>\n\nHozircha kanallar mavjud emas."
+        else:
+            message = "📢 <b>Majburiy kanallar</b>\n\n"
+            for channel in channels:
+                message += f"📌 {channel['name']}\nID: {channel['id']}\nUsername: @{channel['username']}\n\n"
         
         buttons = [
             [InlineKeyboardButton("➕ Kanal qo'shish", callback_data="add_channel")],
@@ -663,7 +657,7 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                             await update.message.reply_text(f"✅ Admin qo'shildi: {admin_id} (username noma'lum)")
                     
                     del user_data['action']
-                    await manage_admins(update, context)
+                    await update.message.reply_text("Asosiy menyu:", reply_markup=admin_menu())
                 except ValueError:
                     await update.message.reply_text("❌ Noto'g'ri admin IDsi! Iltimos, raqam yuboring.")
             
@@ -681,7 +675,7 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                             await update.message.reply_text("❌ Bunday admin topilmadi!")
                     
                     del user_data['action']
-                    await manage_admins(update, context)
+                    await update.message.reply_text("Asosiy menyu:", reply_markup=admin_menu())
                 except ValueError:
                     await update.message.reply_text("❌ Noto'g'ri format! Iltimos, admin ID raqamini yuboring.")
 
@@ -721,7 +715,7 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                     await update.message.reply_text(f"✅ Kanal qo'shildi:\nID: {channel_id}\nNomi: {channel_name}\nUsername: @{username}")
                     
                     del user_data['action']
-                    await manage_channels(update, context)
+                    await update.message.reply_text("Asosiy menyu:", reply_markup=admin_menu())
                 except Exception as e:
                     error_msg = f"Kanal qo'shishda xato: {e}"
                     print(error_msg)
@@ -739,7 +733,7 @@ async def handle_admin_actions(update: Update, context: CallbackContext):
                         await update.message.reply_text("❌ Bunday kanal topilmadi!")
                     
                     del user_data['action']
-                    await manage_channels(update, context)
+                    await update.message.reply_text("Asosiy menyu:", reply_markup=admin_menu())
                 except ValueError:
                     await update.message.reply_text("❌ Noto'g'ri format! Iltimos, kanal ID raqamini yuboring.")
     except Exception as e:
@@ -756,10 +750,11 @@ async def button_click(update: Update, context: CallbackContext):
         data = query.data
         
         if data == "main_menu":
+            if query.message:
+                await query.message.delete()
             await query.message.reply_text(
                 text="Asosiy menyu:",
                 reply_markup=admin_menu())
-            await query.message.delete()
             return
         
         elif data == "add_admin":
@@ -815,9 +810,11 @@ async def button_click(update: Update, context: CallbackContext):
                 buttons = []
                 for channel in channels:
                     if channel['username'] and channel['username'] != "noma'lum":
+                        # Username ni tozalash
+                        username = channel['username'].replace('@', '')
                         buttons.append([InlineKeyboardButton(
                             f"📢 {channel['name']} kanaliga obuna bo'lish", 
-                            url=f"https://t.me/{channel['username']}")])
+                            url=f"https://t.me/{username}")])
                     else:
                         buttons.append([InlineKeyboardButton(
                             f"📢 {channel['name']} kanali",
@@ -825,8 +822,10 @@ async def button_click(update: Update, context: CallbackContext):
                 
                 buttons.append([InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_subscription")])
                 
+                channel_list = "\n".join([f"• {channel['name']} (@{channel['username']})" for channel in channels])
+                
                 await query.edit_message_text(
-                    text="⚠️ Hali barcha kanallarga obuna bo'lmagansiz:",
+                    text=f"⚠️ Hali barcha kanallarga obuna bo'lmagansiz:\n\n{channel_list}\n\nObuna bo'lgachingiz, \"Obuna bo'ldim\" tugmasini bosing.",
                     reply_markup=InlineKeyboardMarkup(buttons))
         
         elif data == "no_username":
@@ -841,10 +840,14 @@ async def button_click(update: Update, context: CallbackContext):
             await query.edit_message_text(
                 text="🎛️ Admin menyusiga qaytdingiz",
                 reply_markup=admin_menu())
+                
     except Exception as e:
         error_msg = f"Tugma bosishda xato: {e}"
         print(error_msg)
-        await send_error_to_admin(context, error_msg)
+        try:
+            await query.edit_message_text("❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.")
+        except:
+            await query.message.reply_text("❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.")
 
 async def manage_admins_callback(update: Update, context: CallbackContext):
     try:
@@ -877,9 +880,12 @@ async def manage_channels_callback(update: Update, context: CallbackContext):
         await query.answer()
         
         channels = list(channels_collection.find())
-        message = "📢 <b>Majburiy kanallar</b>\n\n"
-        for channel in channels:
-            message += f"📌 {channel['name']}\nID: {channel['id']}\nUsername: @{channel['username']}\n\n"
+        if not channels:
+            message = "📢 <b>Majburiy kanallar</b>\n\nHozircha kanallar mavjud emas."
+        else:
+            message = "📢 <b>Majburiy kanallar</b>\n\n"
+            for channel in channels:
+                message += f"📌 {channel['name']}\nID: {channel['id']}\nUsername: @{channel['username']}\n\n"
         
         buttons = [
             [InlineKeyboardButton("➕ Kanal qo'shish", callback_data="add_channel")],
@@ -987,15 +993,18 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 await show_statistics(update, context)
             return
         
+        # Oddiy foydalanuvchilar uchun majburiy kanal tekshiruvi
         subscription_status = await check_subscription(user.id, context)
         if subscription_status is not True:
             channels = subscription_status
             buttons = []
             for channel in channels:
                 if channel['username'] and channel['username'] != "noma'lum":
+                    # Username ni tozalash
+                    username = channel['username'].replace('@', '')
                     buttons.append([InlineKeyboardButton(
                         f"📢 {channel['name']} kanaliga obuna bo'lish", 
-                        url=f"https://t.me/{channel['username']}")])
+                        url=f"https://t.me/{username}")])
                 else:
                     buttons.append([InlineKeyboardButton(
                         f"📢 {channel['name']} kanali",
@@ -1003,11 +1012,16 @@ async def handle_user_message(update: Update, context: CallbackContext):
             
             buttons.append([InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_subscription")])
             
+            channel_list = "\n".join([f"• {channel['name']} (@{channel['username']})" for channel in channels])
+            
             await message.reply_text(
-                "⚠️ Botdan foydalanish uchun quyidagi kanal(lar)ga obuna bo'ling:",
+                f"🎬 Kino Botga xush kelibsiz!\n\n"
+                f"⚠️ Botdan foydalanish uchun quyidagi kanal(lar)ga obuna bo'ling:\n\n{channel_list}\n\n"
+                f"Obuna bo'lgachingiz, \"Obuna bo'ldim\" tugmasini bosing.",
                 reply_markup=InlineKeyboardMarkup(buttons))
             return
         
+        # Agar barcha kanallarga obuna bo'lgan bo'lsa
         if "admin bilan bog'lanish" in text:
             await update.message.reply_text(
                 f"📞 Admin bilan bog'lanish: @{ADMIN_USERNAME}\n\n"
@@ -1021,6 +1035,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
             await update.message.reply_text("Bosh menyu:", reply_markup=user_menu())
         else:
             codes = list(codes_collection.find())
+            code_found = False
             for code in codes:
                 if code['code'].lower() == message.text.lower():
                     try:
@@ -1029,16 +1044,18 @@ async def handle_user_message(update: Update, context: CallbackContext):
                             from_chat_id=CHANNEL_ID,
                             message_id=code['post_id'],
                             disable_notification=True)
-                        return
+                        code_found = True
+                        break
                     except Exception as e:
                         await message.reply_text("❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
                         return
             
-            await forward_to_admin(update, context, user, message)
-            await message.reply_text(
-                "❌ Bunday kod topilmadi!\n"
-                "🔍 Kodni bilmasangiz, pastdagi menyudan kerakli bo'limni tanlang.",
-                reply_markup=user_menu())
+            if not code_found:
+                await forward_to_admin(update, context, user, message)
+                await message.reply_text(
+                    "❌ Bunday kod topilmadi!\n"
+                    "🔍 Kodni bilmasangiz, pastdagi menyudan kerakli bo'limni tanlang.",
+                    reply_markup=user_menu())
     except Exception as e:
         error_msg = f"Foydalanuvchi xabarini qayta ishlashda xato: {e}"
         print(error_msg)
@@ -1064,9 +1081,11 @@ async def start(update: Update, context: CallbackContext):
                 buttons = []
                 for channel in channels:
                     if channel['username'] and channel['username'] != "noma'lum":
+                        # Username ni tozalash
+                        username = channel['username'].replace('@', '')
                         buttons.append([InlineKeyboardButton(
                             f"📢 {channel['name']} kanaliga obuna bo'lish", 
-                            url=f"https://t.me/{channel['username']}")])
+                            url=f"https://t.me/{username}")])
                     else:
                         buttons.append([InlineKeyboardButton(
                             f"📢 {channel['name']} kanali",
@@ -1074,9 +1093,12 @@ async def start(update: Update, context: CallbackContext):
                 
                 buttons.append([InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_subscription")])
                 
+                channel_list = "\n".join([f"• {channel['name']} (@{channel['username']})" for channel in channels])
+                
                 await update.message.reply_text(
-                    "🎬 Kino Botga xush kelibsiz!\n\n"
-                    "⚠️ Botdan foydalanish uchun quyidagi kanal(lar)ga obuna bo'ling:",
+                    f"🎬 Kino Botga xush kelibsiz!\n\n"
+                    f"⚠️ Botdan foydalanish uchun quyidagi kanal(lar)ga obuna bo'ling:\n\n{channel_list}\n\n"
+                    f"Obuna bo'lgachingiz, \"Obuna bo'ldim\" tugmasini bosing.",
                     reply_markup=InlineKeyboardMarkup(buttons))
                 return
             
@@ -1153,13 +1175,8 @@ def keep_alive():
                 # Flask serverga ping yuborish
                 response = requests.get("http://localhost:10000/ping", timeout=10)
                 print(f"🔄 Flask ping: {response.status_code}")
-                
-                # aiohttp serverga ping yuborish
-                response2 = requests.get("http://localhost:8080/ping", timeout=10)
-                print(f"🔄 aiohttp ping: {response2.status_code}")
-                
             except Exception as e:
-                print(f"❌ Ping xatosi: {e}")
+                print(f"❌ Flask ping xatosi: {e}")
             
             time.sleep(300)  # 5 daqiqa
     
@@ -1175,11 +1192,6 @@ def main():
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
         print("🌐 Flask server 10000 portda ishga tushdi")
-        
-        # aiohttp serverni yangi threadda ishga tushirish
-        aiohttp_thread = threading.Thread(target=run_web_server, daemon=True)
-        aiohttp_thread.start()
-        print("🌐 aiohttp server 8080 portda ishga tushdi")
         
         # Botni faol saqlash
         keep_alive()
