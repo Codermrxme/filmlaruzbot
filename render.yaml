@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: kino-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: TOKEN
+        fromSecret: true
+      - key: ADMIN_ID
+        fromSecret: true
+      - key: CHANNEL_ID
+        fromSecret: true
+      - key: ADMIN_USERNAME
+        fromSecret: true
+      - key: MAIN_CHANNEL
+        fromSecret: true
+      - key: MONGODB_URI
+        fromSecret: true
+      - key: MONGO_DB_NAME
+        fromSecret: true
