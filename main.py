@@ -20,6 +20,8 @@ from telegram.ext import (
 from dotenv import load_dotenv
 from pymongo import MongoClient
 import certifi
+import aiohttp
+from aiohttp import web
 
 # 🔧 .env fayldan sozlamalarni yuklash
 load_dotenv()
@@ -74,7 +76,74 @@ except Exception as e:
 # Bot ishga tushgan vaqt
 BOT_START_TIME = datetime.now()
 
-# Flask server yaratish (Render uchun)
+# ==================== aiohttp SERVER ====================
+routes = web.RouteTableDef()
+
+@routes.get("/", allow_head=True)
+async def root_route_handler(request):
+    return web.json_response({"status": "alive", "bot": "kino_bot"})
+
+@routes.get("/ping")
+async def ping_handler(request):
+    return web.json_response({"status": "pong", "message": "Bot is alive"})
+
+@routes.get("/health")
+async def health_handler(request):
+    return web.json_response({"status": "healthy", "service": "telegram_bot"})
+
+async def start_aiohttp_server():
+    """aiohttp serverni ishga tushirish"""
+    app = web.Application()
+    app.add_routes(routes)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("🌐 aiohttp server 8080 portda ishga tushdi")
+    return runner
+
+async def self_ping_task():
+    """Bot o'zini ping qilish"""
+    await asyncio.sleep(30)  # bot to'liq yuklanishini kutadi
+    
+    render_url = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+    if not render_url:
+        print("❌ RENDER_EXTERNAL_HOSTNAME topilmadi, ping o'chirilgan")
+        return
+    
+    url = f"https://{render_url}"
+    print(f"🔄 Ping jarayoni boshlandi: {url}")
+    
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{url}/ping", timeout=30) as resp:
+                    print(f"[PING] {url} → {resp.status}")
+        except Exception as e:
+            print(f"[PING ERROR] {e}")
+        
+        await asyncio.sleep(300)  # har 5 daqiqada ping (300 sekund)
+
+def run_aiohttp_server():
+    """aiohttp serverni threadda ishga tushirish"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        runner = loop.run_until_complete(start_aiohttp_server())
+        loop.run_until_complete(self_ping_task())
+    except Exception as e:
+        print(f"❌ aiohttp serverda xato: {e}")
+    finally:
+        try:
+            loop.run_until_complete(runner.cleanup())
+        except:
+            pass
+        loop.close()
+
+# ==================== FLASK SERVER ====================
 app = Flask(__name__)
 
 @app.route('/')
@@ -101,6 +170,8 @@ def run_flask():
         serve(app, host='0.0.0.0', port=10000)
     except ImportError:
         app.run(host='0.0.0.0', port=10000, debug=False)
+
+# ==================== BOT FUNKSIYALARI ====================
 
 # 🛠️ Yordamchi funksiyalar
 def is_admin(user_id):
@@ -1209,10 +1280,16 @@ def keep_alive():
     def ping_server():
         while True:
             try:
+                # Flask serverga ping yuborish
                 response = requests.get("http://localhost:10000/ping", timeout=10)
                 print(f"🔄 Flask ping: {response.status_code}")
+                
+                # aiohttp serverga ping yuborish
+                response2 = requests.get("http://localhost:8080/ping", timeout=10)
+                print(f"🔄 aiohttp ping: {response2.status_code}")
+                
             except Exception as e:
-                print(f"❌ Flask ping xatosi: {e}")
+                print(f"❌ Ping xatosi: {e}")
             
             time.sleep(300)  # 5 daqiqa
     
@@ -1228,6 +1305,11 @@ def main():
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
         print("🌐 Flask server 10000 portda ishga tushdi")
+        
+        # aiohttp serverni yangi threadda ishga tushirish
+        aiohttp_thread = threading.Thread(target=run_aiohttp_server, daemon=True)
+        aiohttp_thread.start()
+        print("🌐 aiohttp server 8080 portda ishga tushdi")
         
         # Botni faol saqlash
         keep_alive()
