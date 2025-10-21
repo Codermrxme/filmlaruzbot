@@ -215,12 +215,13 @@ def admin_menu():
 
 def user_menu():
     buttons = [
-        ["📞 Admin bilan bog'lanish", "📢 Bizning kanal"],
+        ["📞 Admin bilan bog'lanish", "📢 Bizning kanallar"],
         ["ℹ️ Yordam"]
     ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 async def check_subscription(user_id, context: CallbackContext):
+    """Obunani tekshirish - XATOLIKLARNI TAXLIL QILADIGAN VERSIYA"""
     try:
         channels = list(channels_collection.find())
         if not channels:
@@ -230,15 +231,23 @@ async def check_subscription(user_id, context: CallbackContext):
         for channel in channels:
             try:
                 chat_id = channel['id']
-                member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-                
-                if member.status in ['member', 'administrator', 'creator']:
-                    continue  # Obuna bo'lgan
-                else:
+                # Bot kanalda admin emasligi uchun exception ni ushlaymiz
+                try:
+                    member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+                    
+                    if member.status in ['member', 'administrator', 'creator']:
+                        continue  # Obuna bo'lgan
+                    else:
+                        not_subscribed.append(channel)
+                        
+                except Exception as channel_error:
+                    # Agar bot kanalda admin bo'lmasa yoki boshqa xato bo'lsa
+                    print(f"Kanal {channel['id']} tekshirishda xato: {channel_error}")
+                    # Foydalanuvchini kanalga obuna bo'lishi kerak deb hisoblaymiz
                     not_subscribed.append(channel)
                     
             except Exception as e:
-                print(f"Kanal {channel['id']} obunasini tekshirishda xato: {e}")
+                print(f"Kanal {channel['id']} obunasini tekshirishda umumiy xato: {e}")
                 not_subscribed.append(channel)
         
         if not not_subscribed:
@@ -251,8 +260,8 @@ async def check_subscription(user_id, context: CallbackContext):
         
         return not_subscribed
     except Exception as e:
-        error_msg = f"Obunani tekshirishda xato: {e}"
-        print(error_msg)
+        print(f"Obunani tekshirishda umumiy xato: {e}")
+        # Xato bo'lsa ham foydalanuvchiga ruxsat beramiz
         return True
 
 async def process_user_code(user_id, code_text, context: CallbackContext):
@@ -264,6 +273,7 @@ async def process_user_code(user_id, code_text, context: CallbackContext):
                 try:
                     # Agar post_ids list bo'lsa, barcha postlarni yuborish
                     if isinstance(code.get('post_ids'), list):
+                        sent_count = 0
                         for post_id in code['post_ids']:
                             try:
                                 await context.bot.copy_message(
@@ -272,10 +282,15 @@ async def process_user_code(user_id, code_text, context: CallbackContext):
                                     message_id=post_id,
                                     disable_notification=True
                                 )
+                                sent_count += 1
                                 await asyncio.sleep(1)  # Spamdan saqlash uchun
                             except Exception as e:
                                 print(f"Post {post_id} yuborishda xato: {e}")
-                        return True
+                        
+                        if sent_count > 0:
+                            return True
+                        else:
+                            return False
                     # Agar oddiy post_id bo'lsa
                     elif code.get('post_id'):
                         await context.bot.copy_message(
@@ -293,6 +308,49 @@ async def process_user_code(user_id, code_text, context: CallbackContext):
     except Exception as e:
         print(f"Kodni qayta ishlashda xato: {e}")
         return False
+
+async def show_our_channels(update: Update, context: CallbackContext):
+    """Bizning kanallarni ko'rsatish"""
+    try:
+        channels = list(channels_collection.find())
+        if not channels:
+            await update.message.reply_text(
+                "📢 Hozircha bizning kanallar mavjud emas.",
+                reply_markup=user_menu()
+            )
+            return
+
+        message = "📢 <b>Bizning Kanallar</b>\n\n"
+        buttons = []
+        
+        for channel in channels:
+            message += f"📌 <b>{channel['name']}</b>\n"
+            if channel.get('username') and channel['username'] != "noma'lum":
+                username = channel['username'].replace('@', '')
+                message += f"🔗 @{username}\n\n"
+                buttons.append([InlineKeyboardButton(
+                    f"📢 {channel['name']} kanaliga o'tish", 
+                    url=f"https://t.me/{username}")])
+            else:
+                message += f"🆔 ID: {channel['id']}\n\n"
+                buttons.append([InlineKeyboardButton(
+                    f"📢 {channel['name']}",
+                    callback_data="no_username_channel")])
+
+        buttons.append([InlineKeyboardButton("🔙 Orqaga", callback_data="back_to_user_menu")])
+        
+        await update.message.reply_text(
+            message,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    except Exception as e:
+        error_msg = f"Kanallarni ko'rsatishda xato: {e}"
+        print(error_msg)
+        await update.message.reply_text(
+            "❌ Kanallarni ko'rsatishda xato yuz berdi!",
+            reply_markup=user_menu()
+        )
 
 async def export_users(update: Update, context: CallbackContext):
     try:
@@ -1055,6 +1113,14 @@ async def button_click(update: Update, context: CallbackContext):
         elif data == "no_username":
             await query.answer("❗ Bu kanalda username mavjud emas. Kanalga qo'lda obuna bo'lishingiz kerak.", show_alert=True)
         
+        elif data == "no_username_channel":
+            await query.answer("❗ Bu kanalda username mavjud emas. Kanalni ID orqali qidirishingiz kerak.", show_alert=True)
+        
+        elif data == "back_to_user_menu":
+            await query.edit_message_text(
+                text="👤 Foydalanuvchi menyusiga qaytdingiz",
+                reply_markup=user_menu())
+        
         elif data == "switch_to_user":
             await query.edit_message_text(
                 text="👤 Foydalanuvchi menyusiga o'tdingiz",
@@ -1178,8 +1244,8 @@ async def handle_user_message(update: Update, context: CallbackContext):
                     f"📞 Admin bilan bog'lanish: @{ADMIN_USERNAME}\n\n"
                     "Yoki shu yerga xabaringizni yozib qoldiring:",
                     reply_markup=ReplyKeyboardMarkup([["Orqaga"]], resize_keyboard=True))
-            elif "bizning kanal" in text:
-                await update.message.reply_text(f"📢 Bizning asosiy kanal: @{MAIN_CHANNEL}")
+            elif "bizning kanallar" in text:
+                await show_our_channels(update, context)
             elif "yordam" in text:
                 await user_help(update)
             elif "orqaga" in text:
@@ -1297,8 +1363,8 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 f"📞 Admin bilan bog'lanish: @{ADMIN_USERNAME}\n\n"
                 "Yoki shu yerga xabaringizni yozib qoldiring:",
                 reply_markup=ReplyKeyboardMarkup([["Orqaga"]], resize_keyboard=True))
-        elif "bizning kanal" in text:
-            await update.message.reply_text(f"📢 Bizning asosiy kanal: @{MAIN_CHANNEL}")
+        elif "bizning kanallar" in text:
+            await show_our_channels(update, context)
         elif "yordam" in text:
             await user_help(update)
         elif "orqaga" in text:
@@ -1414,7 +1480,7 @@ async def user_help(update: Update):
             "ℹ️ <b>Yordam:</b>\n\n"
             "🔢 Kinolarni olish uchun kodni yuboring\n"
             f"📞 Agar kodni bilmasangiz, admin bilan bog'laning: @{ADMIN_USERNAME}\n"
-            f"📢 Bizning kanalimizga a'zo bo'ling: @{MAIN_CHANNEL}"
+            f"📢 Bizning kanallarimizga a'zo bo'ling"
         )
         await update.message.reply_text(help_text, parse_mode='HTML')
     except Exception as e:
