@@ -209,16 +209,18 @@ def admin_menu():
         ["🗑️ Kod o'chirish", "📢 Majburiy kanallar"],
         ["🤖 Bot funksiyalari", "✏️ Kodlarni tahrirlash"],
         ["👥 Admin tahrirlash", "👤 Foydalanuvchilar"],
-        ["📊 Statistika", "👤 Foydalanuvchi menyusi"],
-        ["🎛️ Admin panelga qaytish"]  # ✅ Yangi qo'shildi
+        ["📊 Statistika", "👤 Foydalanuvchi menyusi"]
     ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-def user_menu():
+def user_menu(user_id=None):
     buttons = [
         ["📞 Admin bilan bog'lanish", "📢 Bizning kanallar"],
         ["ℹ️ Yordam"]
     ]
+    # ✅ Faqat adminlar uchun "Admin panelga qaytish" tugmasi
+    if user_id and is_admin(user_id):
+        buttons.append(["🎛️ Admin panelga qaytish"])
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 async def check_subscription(user_id, context: CallbackContext):
@@ -313,6 +315,7 @@ async def process_user_code(user_id, code_text, context: CallbackContext):
 async def show_our_channels(update: Update, context: CallbackContext):
     """Bizning kanallarni ko'rsatish"""
     try:
+        user_id = update.effective_user.id
         channels = list(channels_collection.find())
         if not channels:
             if update.callback_query:
@@ -323,7 +326,7 @@ async def show_our_channels(update: Update, context: CallbackContext):
             else:
                 await update.message.reply_text(
                     "📢 Hozircha bizning kanallar mavjud emas.",
-                    reply_markup=user_menu()
+                    reply_markup=user_menu(user_id)
                 )
             return
 
@@ -361,6 +364,7 @@ async def show_our_channels(update: Update, context: CallbackContext):
     except Exception as e:
         error_msg = f"Kanallarni ko'rsatishda xato: {e}"
         print(error_msg)
+        user_id = update.effective_user.id
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 "❌ Kanallarni ko'rsatishda xato yuz berdi!",
@@ -369,7 +373,7 @@ async def show_our_channels(update: Update, context: CallbackContext):
         else:
             await update.message.reply_text(
                 "❌ Kanallarni ko'rsatishda xato yuz berdi!",
-                reply_markup=user_menu()
+                reply_markup=user_menu(user_id)
             )
 
 async def export_users(update: Update, context: CallbackContext):
@@ -1027,14 +1031,14 @@ async def button_click(update: Update, context: CallbackContext):
             else:
                 await query.edit_message_text(
                     text="👤 Foydalanuvchi menyusiga qaytdingiz",
-                    reply_markup=user_menu()
+                    reply_markup=user_menu(user_id)
                 )
             return
         
         elif data == "back_to_user_menu":
             await query.edit_message_text(
                 text="👤 Foydalanuvchi menyusiga qaytdingiz",
-                reply_markup=user_menu()
+                reply_markup=user_menu(user_id)
             )
             return
         
@@ -1100,13 +1104,13 @@ async def button_click(update: Update, context: CallbackContext):
                                 text=f"✅ Kino muvaffaqiyatli yuborildi!\n\n"
                                      f"🔑 Siz yuborgan kod: {user_code}\n\n"
                                      f"🎬 Yangi kino olish uchun boshqa kod yuboring.",
-                                reply_markup=user_menu()
+                                reply_markup=user_menu(user_id)
                             )
                         else:
                             await query.edit_message_text(
                                 text=f"❌ {user_code} kodi topilmadi!\n\n"
                                      f"🔍 To'g'ri kod yuboring yoki admin bilan bog'laning.",
-                                reply_markup=user_menu()
+                                reply_markup=user_menu(user_id)
                             )
                         context.user_data.pop('pending_code', None)
                     else:
@@ -1114,7 +1118,7 @@ async def button_click(update: Update, context: CallbackContext):
                         await query.edit_message_text(
                             text="✅ Barcha kanallarga obuna bo'lgansiz!\n\n"
                                  "🎬 Endi botdan foydalanishingiz mumkin. Kod yuboring.",
-                            reply_markup=user_menu()
+                            reply_markup=user_menu(user_id)
                         )
                 except Exception as e:
                     print(f"Xabar tahrirlashda xato: {e}")
@@ -1122,7 +1126,7 @@ async def button_click(update: Update, context: CallbackContext):
                         chat_id=user_id,
                         text="✅ Barcha kanallarga obuna bo'lgansiz!\n\n"
                              "🎬 Endi botdan foydalanishingiz mumkin. Kod yuboring.",
-                        reply_markup=user_menu()
+                        reply_markup=user_menu(user_id)
                     )
             else:
                 # Hali obuna bo'lmagan
@@ -1157,7 +1161,7 @@ async def button_click(update: Update, context: CallbackContext):
         elif data == "switch_to_user":
             await query.edit_message_text(
                 text="👤 Foydalanuvchi menyusiga o'tdingiz",
-                reply_markup=user_menu())
+                reply_markup=user_menu(user_id))
         
         elif data == "switch_to_admin":
             await query.edit_message_text(
@@ -1257,7 +1261,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
         
         text = message.text.lower()
         
-        # ✅ Admin panelga qaytish tugmasi
+        # ✅ Admin panelga qaytish tugmasi (faqat adminlar uchun)
         if "admin panelga qaytish" in text and is_admin(user.id):
             context.user_data['current_menu'] = 'admin'
             await update.message.reply_text(
@@ -1270,7 +1274,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
             await update.message.reply_text(
                 "👤 Foydalanuvchi menyusiga o'tdingiz\n\n"
                 "🎛️ Admin menyusiga qaytish uchun 'Admin panelga qaytish' tugmasini bosing.",
-                reply_markup=user_menu())
+                reply_markup=user_menu(user.id))
             return
         elif text == "/admin" and is_admin(user.id):
             context.user_data['current_menu'] = 'admin'
@@ -1290,7 +1294,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
             elif "yordam" in text:
                 await user_help(update)
             elif "orqaga" in text:
-                await update.message.reply_text("Bosh menyu:", reply_markup=user_menu())
+                await update.message.reply_text("Bosh menyu:", reply_markup=user_menu(user.id))
             else:
                 codes = list(codes_collection.find())
                 code_found = False
@@ -1335,7 +1339,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
                         "❌ Bunday kod topilmadi!\n"
                         "🔍 Kodni bilmasangiz, pastdagi menyudan kerakli bo'limni tanlang.\n\n"
                         "🎛️ Admin menyusiga qaytish uchun 'Admin panelga qaytish' tugmasini bosing.",
-                        reply_markup=user_menu())
+                        reply_markup=user_menu(user.id))
             return
         
         if is_admin(user.id):
@@ -1414,7 +1418,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
         elif "yordam" in text:
             await user_help(update)
         elif "orqaga" in text:
-            await update.message.reply_text("Bosh menyu:", reply_markup=user_menu())
+            await update.message.reply_text("Bosh menyu:", reply_markup=user_menu(user.id))
         else:
             # Kodni qayta ishlash
             code_found = await process_user_code(user.id, message.text, context)
@@ -1422,7 +1426,7 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 await message.reply_text(
                     "❌ Bunday kod topilmadi!\n"
                     "🔍 Kodni bilmasangiz, pastdagi menyudan kerakli bo'limni tanlang.",
-                    reply_markup=user_menu())
+                    reply_markup=user_menu(user.id))
     except Exception as e:
         error_msg = f"Foydalanuvchi xabarini qayta ishlashda xato: {e}"
         print(error_msg)
@@ -1438,8 +1442,7 @@ async def start(update: Update, context: CallbackContext):
         if is_admin(user.id):
             await update.message.reply_text(
                 "🎛️ Admin paneliga xush kelibsiz!\n\n"
-                "👤 Foydalanuvchi menyusiga o'tish uchun 'Foydalanuvchi menyusi' tugmasini bosing.\n"
-                "🎛️ Admin menyusiga qaytish uchun 'Admin panelga qaytish' tugmasini bosing.",
+                "👤 Foydalanuvchi menyusiga o'tish uchun 'Foydalanuvchi menyusi' tugmasini bosing.",
                 reply_markup=admin_menu())
         else:
             subscription_status = await check_subscription(user.id, context)
@@ -1472,7 +1475,7 @@ async def start(update: Update, context: CallbackContext):
                 "🎬 Kino Botga xush kelibsiz!\n\n"
                 "📽️ Kod yuboring va kinolarga ega bo'ling.\n"
                 "🔍 Kodni bilmasangiz, pastdagi menyudan kerakli bo'limni tanlang.",
-                reply_markup=user_menu())
+                reply_markup=user_menu(user.id))
     except Exception as e:
         error_msg = f"Start komandasida xato: {e}"
         print(error_msg)
