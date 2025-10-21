@@ -265,7 +265,7 @@ async def check_subscription(user_id, context: CallbackContext):
         return True
 
 async def process_user_code(user_id, code_text, context: CallbackContext):
-    """Foydalanuvchi kodi bilan ishlash - BIR NECHA POST ID LARI BILAN"""
+    """Foydalanuvchi kodi bilan ishlash - FORWARD QILISH O'CHIRILGAN"""
     try:
         codes = list(codes_collection.find())
         for code in codes:
@@ -276,11 +276,13 @@ async def process_user_code(user_id, code_text, context: CallbackContext):
                         sent_count = 0
                         for post_id in code['post_ids']:
                             try:
+                                # 🔒 COPY MESSAGE - FORWARD QILMAYDI VA KONTENTNI HIMOYA QILADI
                                 await context.bot.copy_message(
                                     chat_id=user_id,
                                     from_chat_id=CHANNEL_ID,
                                     message_id=post_id,
-                                    disable_notification=True
+                                    disable_notification=True,
+                                    protect_content=True  # 🔒 Kontentni himoya qilish
                                 )
                                 sent_count += 1
                                 await asyncio.sleep(1)  # Spamdan saqlash uchun
@@ -293,11 +295,13 @@ async def process_user_code(user_id, code_text, context: CallbackContext):
                             return False
                     # Agar oddiy post_id bo'lsa
                     elif code.get('post_id'):
+                        # 🔒 COPY MESSAGE - FORWARD QILMAYDI VA KONTENTNI HIMOYA QILADI
                         await context.bot.copy_message(
                             chat_id=user_id,
                             from_chat_id=CHANNEL_ID,
                             message_id=code['post_id'],
-                            disable_notification=True
+                            disable_notification=True,
+                            protect_content=True  # 🔒 Kontentni himoya qilish
                         )
                         return True
                 except Exception as e:
@@ -328,9 +332,9 @@ async def show_our_channels(update: Update, context: CallbackContext):
             if channel.get('username') and channel['username'] != "noma'lum":
                 username = channel['username'].replace('@', '')
                 message += f"🔗 @{username}\n\n"
-                # buttons.append([InlineKeyboardButton(
-                #     f"📢 {channel['name']} kanaliga o'tish", 
-                #     url=f"https://t.me/{username}")])
+                buttons.append([InlineKeyboardButton(
+                    f"📢 {channel['name']} kanaliga o'tish", 
+                    url=f"https://t.me/{username}")])
             else:
                 message += f"🆔 ID: {channel['id']}\n\n"
                 buttons.append([InlineKeyboardButton(
@@ -1260,11 +1264,13 @@ async def handle_user_message(update: Update, context: CallbackContext):
                             if code.get('post_ids') and len(code['post_ids']) > 1:
                                 for post_id in code['post_ids']:
                                     try:
+                                        # 🔒 FORWARD QILISH O'CHIRILGAN
                                         await context.bot.copy_message(
                                             chat_id=user.id,
                                             from_chat_id=CHANNEL_ID,
                                             message_id=post_id,
-                                            disable_notification=True
+                                            disable_notification=True,
+                                            protect_content=True
                                         )
                                         await asyncio.sleep(1)  # Spamdan saqlash uchun
                                     except Exception as e:
@@ -1273,11 +1279,14 @@ async def handle_user_message(update: Update, context: CallbackContext):
                                 # Oddiy bitta post
                                 post_id = code.get('post_id') or (code['post_ids'][0] if code.get('post_ids') else None)
                                 if post_id:
+                                    # 🔒 FORWARD QILISH O'CHIRILGAN
                                     await context.bot.copy_message(
                                         chat_id=user.id,
                                         from_chat_id=CHANNEL_ID,
                                         message_id=post_id,
-                                        disable_notification=True)
+                                        disable_notification=True,
+                                        protect_content=True
+                                    )
                             code_found = True
                             break
                         except Exception as e:
