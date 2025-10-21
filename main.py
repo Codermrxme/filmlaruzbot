@@ -328,9 +328,9 @@ async def show_our_channels(update: Update, context: CallbackContext):
             if channel.get('username') and channel['username'] != "noma'lum":
                 username = channel['username'].replace('@', '')
                 message += f"🔗 @{username}\n\n"
-                buttons.append([InlineKeyboardButton(
-                    f"📢 {channel['name']} kanaliga o'tish", 
-                    url=f"https://t.me/{username}")])
+                # buttons.append([InlineKeyboardButton(
+                #     f"📢 {channel['name']} kanaliga o'tish", 
+                #     url=f"https://t.me/{username}")])
             else:
                 message += f"🆔 ID: {channel['id']}\n\n"
                 buttons.append([InlineKeyboardButton(
