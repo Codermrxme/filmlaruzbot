@@ -102,29 +102,27 @@ async def start_aiohttp_server():
     site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
     print("🌐 aiohttp server 8080 portda ishga tushdi")
-    return runner
+    
+    # 🔄 Bot o'zini har 10 daqiqada ping qiladi
+    async def self_ping():
+        await asyncio.sleep(20)  # bot to'liq yuklanishini kutadi
+        render_url = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+        if not render_url:
+            print("❌ RENDER_EXTERNAL_HOSTNAME topilmadi, ping o'chirilgan")
+            return
+            
+        url = f"https://{render_url}"
+        while True:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{url}/ping") as resp:
+                        print(f"[PING] {url} → {resp.status}")
+            except Exception as e:
+                print(f"[PING ERROR] {e}")
+            await asyncio.sleep(600)  # har 10 daqiqada ping (600 sekund)
 
-async def self_ping_task():
-    """Bot o'zini ping qilish"""
-    await asyncio.sleep(30)  # bot to'liq yuklanishini kutadi
-    
-    render_url = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-    if not render_url:
-        print("❌ RENDER_EXTERNAL_HOSTNAME topilmadi, ping o'chirilgan")
-        return
-    
-    url = f"https://{render_url}"
-    print(f"🔄 Ping jarayoni boshlandi: {url}")
-    
-    while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{url}/ping", timeout=30) as resp:
-                    print(f"[PING] {url} → {resp.status}")
-        except Exception as e:
-            print(f"[PING ERROR] {e}")
-        
-        await asyncio.sleep(300)  # har 5 daqiqada ping (300 sekund)
+    asyncio.create_task(self_ping())  # 🔄 fon jarayon sifatida ishlaydi
+    return app
 
 def run_aiohttp_server():
     """aiohttp serverni threadda ishga tushirish"""
@@ -133,14 +131,11 @@ def run_aiohttp_server():
     
     try:
         runner = loop.run_until_complete(start_aiohttp_server())
-        loop.run_until_complete(self_ping_task())
+        print("✅ aiohttp server ishga tushdi va ping jarayoni boshlandi")
+        loop.run_forever()
     except Exception as e:
         print(f"❌ aiohttp serverda xato: {e}")
     finally:
-        try:
-            loop.run_until_complete(runner.cleanup())
-        except:
-            pass
         loop.close()
 
 # ==================== FLASK SERVER ====================
@@ -208,14 +203,6 @@ async def send_error_to_admin(context: CallbackContext, error_msg):
     except Exception as e:
         print(f"Xatoni adminga yuborishda xato: {e}")
 
-async def forward_to_admin(update: Update, context: CallbackContext, user, message):
-    try:
-        await message.forward(chat_id=ADMIN_ID)
-    except Exception as e:
-        error_msg = f"Adminga yuborishda xato: {e}"
-        print(error_msg)
-        await send_error_to_admin(context, error_msg)
-
 def admin_menu():
     buttons = [
         ["🎬 Kino qo'shish", "📋 Kodlar ro'yxati"],
@@ -269,19 +256,35 @@ async def check_subscription(user_id, context: CallbackContext):
         return True
 
 async def process_user_code(user_id, code_text, context: CallbackContext):
-    """Foydalanuvchi kodi bilan ishlash"""
+    """Foydalanuvchi kodi bilan ishlash - BIR NECHA POST ID LARI BILAN"""
     try:
         codes = list(codes_collection.find())
         for code in codes:
             if code['code'].lower() == code_text.lower():
                 try:
-                    await context.bot.copy_message(
-                        chat_id=user_id,
-                        from_chat_id=CHANNEL_ID,
-                        message_id=code['post_id'],
-                        disable_notification=True
-                    )
-                    return True
+                    # Agar post_ids list bo'lsa, barcha postlarni yuborish
+                    if isinstance(code.get('post_ids'), list):
+                        for post_id in code['post_ids']:
+                            try:
+                                await context.bot.copy_message(
+                                    chat_id=user_id,
+                                    from_chat_id=CHANNEL_ID,
+                                    message_id=post_id,
+                                    disable_notification=True
+                                )
+                                await asyncio.sleep(1)  # Spamdan saqlash uchun
+                            except Exception as e:
+                                print(f"Post {post_id} yuborishda xato: {e}")
+                        return True
+                    # Agar oddiy post_id bo'lsa
+                    elif code.get('post_id'):
+                        await context.bot.copy_message(
+                            chat_id=user_id,
+                            from_chat_id=CHANNEL_ID,
+                            message_id=code['post_id'],
+                            disable_notification=True
+                        )
+                        return True
                 except Exception as e:
                     print(f"Kino yuborishda xato: {e}")
                     return False
@@ -324,6 +327,47 @@ async def export_users(update: Update, context: CallbackContext):
         error_msg = f"Foydalanuvchilarni eksport qilishda xato: {e}"
         print(error_msg)
         await update.message.reply_text("❌ Foydalanuvchilar ro'yxatini yuborishda xato yuz berdi!")
+        await send_error_to_admin(context, error_msg)
+
+async def export_codes(update: Update, context: CallbackContext):
+    """Kodlarni Excel faylga eksport qilish"""
+    try:
+        if not is_admin(update.effective_user.id):
+            await update.message.reply_text("❌ Sizda bunday huquq yo'q!")
+            return
+
+        codes = list(codes_collection.find())
+        if not codes:
+            await update.message.reply_text("❌ Kodlar mavjud emas!")
+            return
+
+        # Ma'lumotlarni tayyorlash
+        codes_data = []
+        for code in codes:
+            code_data = {
+                "Kod": code['code'],
+                "Post ID": code.get('post_id', ''),
+                "Post IDs": ', '.join(map(str, code.get('post_ids', []))) if code.get('post_ids') else '',
+                "Qo'shilgan vaqti": code['added_at'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(code['added_at'], datetime) else code['added_at'],
+                "Admin ID": code.get('added_by', '')
+            }
+            codes_data.append(code_data)
+        
+        df = pd.DataFrame(codes_data)
+        excel_file = "codes.xlsx"
+        df.to_excel(excel_file, index=False)
+
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(excel_file, 'rb'),
+            caption="📋 Kodlar ro'yxati (Excel format)"
+        )
+        
+        os.remove(excel_file)
+    except Exception as e:
+        error_msg = f"Kodlarni eksport qilishda xato: {e}"
+        print(error_msg)
+        await update.message.reply_text("❌ Kodlar ro'yxatini yuborishda xato yuz berdi!")
         await send_error_to_admin(context, error_msg)
 
 async def show_statistics(update: Update, context: CallbackContext):
@@ -450,21 +494,39 @@ async def remove_admin(update: Update, context: CallbackContext):
         await send_error_to_admin(context, error_msg)
 
 async def add_code(update: Update, context: CallbackContext):
+    """Kod qo'shish - BIR NECHA POST ID LARI BILAN"""
     try:
         if not is_admin(update.effective_user.id):
             await update.message.reply_text("❌ Sizda bunday huquq yo'q!")
             return
 
         if len(context.args) < 2:
-            await update.message.reply_text("❌ Noto'g'ri format!\nFoydalanish: /kod [KOD] [POST_ID]")
+            await update.message.reply_text(
+                "❌ Noto'g'ri format!\n"
+                "Foydalanish: /kod [KOD] [POST_ID1,POST_ID2,...]\n"
+                "Masalan: /kod premium 123,124,125\n"
+                "Yoki bitta post: /kod premium 123"
+            )
             return
             
         code = context.args[0]
-        try:
-            post_id = int(context.args[1])
-        except ValueError:
-            await update.message.reply_text("❌ Noto'g'ri format! POST_ID raqam bo'lishi kerak.")
-            return
+        post_ids_input = context.args[1]
+        
+        # Post ID larni ajratib olish
+        if ',' in post_ids_input:
+            # Bir nechta post ID lar
+            try:
+                post_ids = [int(pid.strip()) for pid in post_ids_input.split(',')]
+            except ValueError:
+                await update.message.reply_text("❌ Noto'g'ri format! POST_ID lar raqam bo'lishi kerak.")
+                return
+        else:
+            # Bitta post ID
+            try:
+                post_ids = [int(post_ids_input)]
+            except ValueError:
+                await update.message.reply_text("❌ Noto'g'ri format! POST_ID raqam bo'lishi kerak.")
+                return
         
         if codes_collection.find_one({"code": {"$regex": f"^{code}$", "$options": "i"}}):
             await update.message.reply_text("❌ Bu kod allaqachon mavjud!")
@@ -472,12 +534,17 @@ async def add_code(update: Update, context: CallbackContext):
         
         new_code = {
             "code": code,
-            "post_id": post_id,
+            "post_ids": post_ids,
+            "post_id": post_ids[0] if len(post_ids) == 1 else None,  # Orqaga moslik uchun
             "added_at": datetime.now(),
             "added_by": update.effective_user.id
         }
         codes_collection.insert_one(new_code)
-        await update.message.reply_text(f"✅ Kod qo'shildi: {code} ➡️ {post_id}")
+        
+        if len(post_ids) > 1:
+            await update.message.reply_text(f"✅ Kod qo'shildi: {code} ➡️ {len(post_ids)} ta post")
+        else:
+            await update.message.reply_text(f"✅ Kod qo'shildi: {code} ➡️ {post_ids[0]}")
     except Exception as e:
         error_msg = f"Kod qo'shishda xato: {e}"
         print(error_msg)
@@ -485,29 +552,53 @@ async def add_code(update: Update, context: CallbackContext):
         await send_error_to_admin(context, error_msg)
 
 async def edit_code(update: Update, context: CallbackContext):
+    """Kodni tahrirlash - BIR NECHA POST ID LARI BILAN"""
     try:
         if not is_admin(update.effective_user.id):
             await update.message.reply_text("❌ Sizda bunday huquq yo'q!")
             return
 
         if len(context.args) < 2:
-            await update.message.reply_text("❌ Noto'g'ri format!\nFoydalanish: /tahrirlash [KOD] [YANGI_POST_ID]")
+            await update.message.reply_text(
+                "❌ Noto'g'ri format!\n"
+                "Foydalanish: /tahrirlash [KOD] [YANGI_POST_ID1,YANGI_POST_ID2,...]\n"
+                "Masalan: /tahrirlash premium 123,124,125"
+            )
             return
             
         code = context.args[0]
-        try:
-            new_post_id = int(context.args[1])
-        except ValueError:
-            await update.message.reply_text("❌ Noto'g'ri format! POST_ID raqam bo'lishi kerak.")
-            return
+        post_ids_input = context.args[1]
+        
+        # Post ID larni ajratib olish
+        if ',' in post_ids_input:
+            # Bir nechta post ID lar
+            try:
+                post_ids = [int(pid.strip()) for pid in post_ids_input.split(',')]
+            except ValueError:
+                await update.message.reply_text("❌ Noto'g'ri format! POST_ID lar raqam bo'lishi kerak.")
+                return
+        else:
+            # Bitta post ID
+            try:
+                post_ids = [int(post_ids_input)]
+            except ValueError:
+                await update.message.reply_text("❌ Noto'g'ri format! POST_ID raqam bo'lishi kerak.")
+                return
         
         result = codes_collection.update_one(
             {"code": {"$regex": f"^{code}$", "$options": "i"}},
-            {"$set": {"post_id": new_post_id, "updated_at": datetime.now()}}
+            {"$set": {
+                "post_ids": post_ids,
+                "post_id": post_ids[0] if len(post_ids) == 1 else None,
+                "updated_at": datetime.now()
+            }}
         )
         
         if result.modified_count > 0:
-            await update.message.reply_text(f"✅ Kod tahrirlandi: {code} ➡️ {new_post_id}")
+            if len(post_ids) > 1:
+                await update.message.reply_text(f"✅ Kod tahrirlandi: {code} ➡️ {len(post_ids)} ta post")
+            else:
+                await update.message.reply_text(f"✅ Kod tahrirlandi: {code} ➡️ {post_ids[0]}")
         else:
             await update.message.reply_text("❌ Bunday kod topilmadi!")
     except Exception as e:
@@ -552,9 +643,21 @@ async def list_codes(update: Update, context: CallbackContext):
 
         message = "📋 Kodlar ro'yxati:\n\n"
         for code in codes:
-            message += f"🔑 {code['code']} ➡️ {channel_link(code['post_id'])}\n"
+            if code.get('post_ids') and len(code['post_ids']) > 1:
+                message += f"🔑 {code['code']} ➡️ {len(code['post_ids'])} ta post\n"
+            else:
+                post_id = code.get('post_id') or (code['post_ids'][0] if code.get('post_ids') else 'Noma\'lum')
+                message += f"🔑 {code['code']} ➡️ {channel_link(post_id)}\n"
         
-        await update.message.reply_text(message)
+        # Excel fayl yuborish tugmasi
+        keyboard = [
+            [InlineKeyboardButton("📊 Excel fayl yuklab olish", callback_data="export_codes_excel")]
+        ]
+        
+        await update.message.reply_text(
+            message, 
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     except Exception as e:
         error_msg = f"Kodlar ro'yxatini ko'rsatishda xato: {e}"
         print(error_msg)
@@ -890,6 +993,10 @@ async def button_click(update: Update, context: CallbackContext):
             await manage_channels_callback(update, context)
             return
         
+        elif data == "export_codes_excel":
+            await export_codes_callback(update, context)
+            return
+        
         elif data == "check_subscription":
             # Foydalanuvchi kodini saqlash
             user_code = context.user_data.get('pending_code')
@@ -1022,6 +1129,20 @@ async def manage_channels_callback(update: Update, context: CallbackContext):
         print(error_msg)
         await send_error_to_admin(context, error_msg)
 
+async def export_codes_callback(update: Update, context: CallbackContext):
+    """Kodlarni Excel faylga eksport qilish callback"""
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        await query.edit_message_text("📊 Kodlar ro'yxati Excel faylga yuklanmoqda...")
+        await export_codes(update, context)
+        
+    except Exception as e:
+        error_msg = f"Kodlarni eksport qilishda xato: {e}"
+        print(error_msg)
+        await query.edit_message_text("❌ Kodlar ro'yxatini yuklashda xato yuz berdi!")
+
 async def handle_user_message(update: Update, context: CallbackContext):
     try:
         user = update.effective_user
@@ -1069,11 +1190,28 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 for code in codes:
                     if code['code'].lower() == message.text.lower():
                         try:
-                            await context.bot.copy_message(
-                                chat_id=user.id,
-                                from_chat_id=CHANNEL_ID,
-                                message_id=code['post_id'],
-                                disable_notification=True)
+                            # Bir nechta post ID lar bilan ishlash
+                            if code.get('post_ids') and len(code['post_ids']) > 1:
+                                for post_id in code['post_ids']:
+                                    try:
+                                        await context.bot.copy_message(
+                                            chat_id=user.id,
+                                            from_chat_id=CHANNEL_ID,
+                                            message_id=post_id,
+                                            disable_notification=True
+                                        )
+                                        await asyncio.sleep(1)  # Spamdan saqlash uchun
+                                    except Exception as e:
+                                        print(f"Post {post_id} yuborishda xato: {e}")
+                            else:
+                                # Oddiy bitta post
+                                post_id = code.get('post_id') or (code['post_ids'][0] if code.get('post_ids') else None)
+                                if post_id:
+                                    await context.bot.copy_message(
+                                        chat_id=user.id,
+                                        from_chat_id=CHANNEL_ID,
+                                        message_id=post_id,
+                                        disable_notification=True)
                             code_found = True
                             break
                         except Exception as e:
@@ -1094,7 +1232,12 @@ async def handle_user_message(update: Update, context: CallbackContext):
                 return
             
             if "kino qo'shish" in text:
-                await update.message.reply_text("Yangi kod qo'shish:\n/kod [KOD] [POST_ID]\nMasalan: /kod premium 123")
+                await update.message.reply_text(
+                    "Yangi kod qo'shish:\n"
+                    "/kod [KOD] [POST_ID1,POST_ID2,...]\n"
+                    "Masalan: /kod premium 123,124,125\n"
+                    "Yoki bitta post: /kod premium 123"
+                )
             elif "kodlar ro'yxati" in text:
                 await list_codes(update, context)
             elif "kod o'chirish" in text:
@@ -1104,7 +1247,11 @@ async def handle_user_message(update: Update, context: CallbackContext):
             elif "bot funksiyalari" in text:
                 await bot_help(update)
             elif "kodlarni tahrirlash" in text:
-                await update.message.reply_text("Kodni tahrirlash:\n/tahrirlash [KOD] [YANGI_POST_ID]\nMasalan: /tahrirlash premium 456")
+                await update.message.reply_text(
+                    "Kodni tahrirlash:\n"
+                    "/tahrirlash [KOD] [YANGI_POST_ID1,YANGI_POST_ID2,...]\n"
+                    "Masalan: /tahrirlash premium 123,124,125"
+                )
             elif "admin tahrirlash" in text:
                 await manage_admins(update, context)
             elif "foydalanuvchilar" in text:
@@ -1160,7 +1307,6 @@ async def handle_user_message(update: Update, context: CallbackContext):
             # Kodni qayta ishlash
             code_found = await process_user_code(user.id, message.text, context)
             if not code_found:
-                await forward_to_admin(update, context, user, message)
                 await message.reply_text(
                     "❌ Bunday kod topilmadi!\n"
                     "🔍 Kodni bilmasangiz, pastdagi menyudan kerakli bo'limni tanlang.",
@@ -1225,16 +1371,18 @@ async def bot_help(update: Update):
         help_text = (
             "🤖 <b>Bot funksiyalari:</b>\n\n"
             "🎬 <b>Kino qo'shish:</b>\n"
-            "<code>/kod [KOD] [POST_ID]</code>\n"
-            "Masalan: <code>/kod premium 123</code>\n\n"
+            "<code>/kod [KOD] [POST_ID1,POST_ID2,...]</code>\n"
+            "Masalan: <code>/kod premium 123,124,125</code>\n\n"
             "✏️ <b>Kodni tahrirlash:</b>\n"
-            "<code>/tahrirlash [KOD] [YANGI_POST_ID]</code>\n"
-            "Masalan: <code>/tahrirlash premium 456</code>\n\n"
+            "<code>/tahrirlash [KOD] [YANGI_POST_ID1,YANGI_POST_ID2,...]</code>\n"
+            "Masalan: <code>/tahrirlash premium 123,124,125</code>\n\n"
             "🗑️ <b>Kodni o'chirish:</b>\n"
             "<code>/ochirish [KOD]</code>\n"
             "Masalan: <code>/ochirish premium</code>\n\n"
             "📋 <b>Kodlar ro'yxati:</b>\n"
             "<code>/royxat</code>\n\n"
+            "📊 <b>Kodlarni Excel ga eksport:</b>\n"
+            "Kodlar ro'yxatidan Excel fayl yuklab olish\n\n"
             "👥 <b>Admin qo'shish:</b>\n"
             "<code>/addAdmin [USER_ID]</code>\n"
             "Masalan: <code>/addAdmin 123456789</code>\n\n"
@@ -1301,6 +1449,8 @@ def keep_alive():
 def main():
     """Asosiy funksiya"""
     try:
+        print("🚀 Bot va serverlar ishga tushmoqda...")
+        
         # Flask serverni yangi threadda ishga tushirish
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
